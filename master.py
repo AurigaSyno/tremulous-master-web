@@ -43,9 +43,13 @@ from random import choice
 from select import select, error as selecterror
 from signal import signal, SIGINT, SIG_DFL
 from socket import (socket, error as sockerr, has_ipv6,
-                   AF_UNSPEC, AF_INET, AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+                   AF_UNSPEC, AF_INET, AF_INET6, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, IPPROTO_UDP, IPPROTO_TCP)
 from sys import exit, stderr
 from time import time
+
+from wsproto import ConnectionType, WSConnection
+from wsproto.events import (AcceptConnection, CloseConnection, BytesMessage,
+                            Message, Ping, Request, TextMessage)
 
 # Local imports
 from config import config, ConfigError
@@ -84,6 +88,9 @@ inSocks = list()
 
 # dict: socks[address_family].family == address_family
 outSocks = dict()
+
+usingWs = False
+ws_connections = dict()
 
 # dict of [label][addr] -> Server instance
 servers = dict((label, dict()) for label in
@@ -233,11 +240,25 @@ class Server(object):
 def safe_send(sock, data, addr):
     '''Network failures happen sometimes. When they do, it's best to just keep
     going and whine about it loudly than die on the exception.'''
-    try:
-        sock.sendto(data, addr)
-    except sockerr as err:
-        log(LOG_ERROR, 'ERROR: sending to', addr, 'failed with error:',
-            err.strerror)
+    if sock.type == SOCK_STREAM: #ws connection
+        if sock not in ws_connections: #double check this still exists
+            log(LOG_ERROR, 'ERROR: WebSocket connection', addr, 'no longer exists')
+            return
+        else:
+            try:
+                ws = ws_connections[sock]['ws']
+                ws.send(BytesMessage(data=data))
+                sock.sendall(ws.data_to_send())
+            except sockerr as err:
+                log(LOG_ERROR, 'ERROR: sending to WebSocket', addr, 'failed with error:',
+                    err.strerror)
+
+    else:
+        try:
+            sock.sendto(data, addr)
+        except sockerr as err:
+            log(LOG_ERROR, 'ERROR: sending to', addr, 'failed with error:',
+                err.strerror)
 
 def find_featured(addr):
     # docstring TODO
@@ -319,7 +340,7 @@ def getmotd(sock, addr, data):
     if not rinfo['motd']:
         return
 
-    response = '\xff\xff\xff\xffmotd {0}'.format(rinfo)
+    response = bytes(('\xff\xff\xff\xffmotd {0}'.format(rinfo)), "utf-8")
     log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, response))
     safe_send(sock, response, addr)
 
@@ -485,7 +506,7 @@ def deserialise():
                      # fake a heartbeat to verify the server as soon as
                      # possible could cause an initial flood of traffic, but
                      # unlikely to be anything that it can't handle
-                     heartbeat(addr, '')
+                     heartbeat(addr, b'')
                      count += 1
     log(LOG_VERBOSE, 'Read', count, 'servers from cache')
 
@@ -517,6 +538,16 @@ try:
         outSocks[AF_INET6] = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
         outSocks[AF_INET6].bind((config.listen6_addr, config.challengeport))
 
+    if (config.ipv4 or config.ipv6) and config.use_ws and config.ws_port:
+        log(LOG_PRINT, 'WebSockets: Listening on', config.ws_port)
+        s = socket(AF_INET, SOCK_STREAM)
+        s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        s.bind((config.listen_addr, config.ws_port))
+        s.listen(5)
+        s.setblocking(False)
+        inSocks.append(s)
+        usingWs = True
+
     if not inSocks and not outSocks:
         log(LOG_ERROR, 'Error: Not listening on any sockets, aborting')
         exit(1)
@@ -531,9 +562,38 @@ except IOError as err:
     if err.errno != ENOENT:
         log(LOG_ERROR, 'Error reading serverlist.txt:', err.strerror)
 
+def processmessage(sock, data, addr):
+    saddr = Addr(addr, sock.family)
+    # for logging
+    addrstr = '<< {0}:'.format(saddr)
+    log(LOG_DEBUG, addrstr, repr(data))
+    res = filterpacket(data, saddr)
+    if res:
+        log(LOG_VERBOSE, addrstr, 'rejected ({0})'.format(res))
+        return
+    data = data[4:] # skip header
+    # assemble a list of callbacks, to which we will give the
+    # socket to respond on, the address of the request, and the data
+    responses = [
+        # this looks like it should be a dict but since we use
+        # startswith it wouldn't really improve matters
+        (b'gamestat', lambda s, a, d: gamestat(a, d)),
+        (b'getmotd', getmotd),
+        (b'getservers', getservers),
+        # getserversExt also starts with getservers
+        (b'heartbeat', lambda s, a, d: heartbeat(a, d)),
+        # infoResponses will arrive on an outSock
+    ]
+    for (name, func) in responses:
+        if data.startswith(name):
+            func(sock, saddr, data)
+            break
+    else:
+        log(LOG_VERBOSE, addrstr, 'unrecognised content:', repr(data))
+
 def mainloop():
     try:
-        ret = select(chain(inSocks, list(outSocks.values())), [], [])
+        ret = select(chain(inSocks, list(outSocks.values()), list(ws_connections.keys())), [], [])
         ready = ret[0]
     except selecterror as err:
         # select can be interrupted by a signal: if it wasn't a fatal signal,
@@ -542,37 +602,58 @@ def mainloop():
             return
         raise
     prune_timeouts()
-    for sock in inSocks:
-        if sock in ready:
+
+    for sock in ready:
+        if usingWs and sock.type == SOCK_STREAM and sock in inSocks: # new ws connection
+            try:
+                ws_sock, addr = sock.accept()
+                ws_sock.setblocking(False)
+                ws = WSConnection(ConnectionType.SERVER)
+                ws_connections[ws_sock] = dict(ws=ws, addr=addr)
+                log(LOG_VERBOSE, f"New WebSocket connection from {addr}")
+            except Exception as e:
+                log(LOG_ERROR, f"Error accepting WebSocket connection: {e}")
+
+        elif sock in ws_connections:
+            try:
+                data = sock.recv(2048)
+
+                if not data:
+                    del ws_connections[sock]
+                    sock.close()
+                    continue
+
+                ws = ws_connections[sock]['ws']
+                addr = ws_connections[sock]['addr']
+                ws.receive_data(data)
+
+                for event in ws.events():
+                    if isinstance(event, Request):
+                        wsdata = ws.send(AcceptConnection())
+                        #safe_send(sock, ws.send(AcceptConnection()), addr)
+                        #ws.accept(event)
+                        sock.sendall(wsdata)
+                    
+                    elif isinstance(event, BytesMessage):
+                        message_data = event.data
+                        processmessage(sock, message_data, addr)
+
+                    elif isinstance(event, CloseConnection):
+                        del ws_connections[sock]
+                        sock.close()
+                        break
+
+            except Exception as e:
+                log(LOG_ERROR, f"WebSocket error: {e}")
+                if sock in ws_connections: #could be gone by this point
+                    del ws_connections[sock]
+                sock.close()
+
+        elif sock in inSocks: # udp
             # FIXME: 2048 magic number
             (data, addr) = sock.recvfrom(2048)
-            saddr = Addr(addr, sock.family)
-            # for logging
-            addrstr = '<< {0}:'.format(saddr)
-            log(LOG_DEBUG, addrstr, repr(data))
-            res = filterpacket(data, saddr)
-            if res:
-                log(LOG_VERBOSE, addrstr, 'rejected ({0})'.format(res))
-                continue
-            data = data[4:] # skip header
-            # assemble a list of callbacks, to which we will give the
-            # socket to respond on, the address of the request, and the data
-            responses = [
-                # this looks like it should be a dict but since we use
-                # startswith it wouldn't really improve matters
-                (b'gamestat', lambda s, a, d: gamestat(a, d)),
-                (b'getmotd', getmotd),
-                (b'getservers', getservers),
-                # getserversExt also starts with getservers
-                (b'heartbeat', lambda s, a, d: heartbeat(a, d)),
-                # infoResponses will arrive on an outSock
-            ]
-            for (name, func) in responses:
-                if data.startswith(name):
-                    func(sock, saddr, data)
-                    break
-            else:
-                log(LOG_VERBOSE, addrstr, 'unrecognised content:', repr(data))
+            processmessage(sock, data, addr)
+
     for sock in list(outSocks.values()):
         if sock in ready:
             (data, addr) = sock.recvfrom(2048)
@@ -600,7 +681,7 @@ def mainloop():
 try:
     while True:
         mainloop()
-except KeyboardInterrupt:
+except KeyboardInterrupt: #TODO: We need to gracefully close all existing ws connections
     stderr.write('Interrupted')
     signal(SIGINT, SIG_DFL)
     # The following kill stops the finally from running,

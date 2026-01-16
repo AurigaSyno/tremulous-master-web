@@ -186,10 +186,10 @@ class MasterConfig(object):
         parser.add_option('-h', '--help', action = 'store_true',
                           help = 'Display this help and exit')
         # options other than --help are in loose alphabetical order
+        parser.add_option('-4', '--ipv4', action = 'store_false',
+                    default = True, dest = 'ipv6',
+                    help = 'Only use IPv4')
         if has_ipv6:
-            parser.add_option('-4', '--ipv4', action = 'store_false',
-                              default = True, dest = 'ipv6',
-                              help = 'Only use IPv4')
             parser.add_option('-6', '--ipv6', action = 'store_false',
                               default = True, dest = 'ipv4',
                               help = 'Only use IPv6')
@@ -237,6 +237,11 @@ class MasterConfig(object):
                           metavar = 'LEVEL')
         parser.add_option('-V', '--version', action = 'store_true',
                           help = 'Show version information')
+        parser.add_option('-w', '--use_ws', action = 'store_true',
+                    default = True, dest = 'use_ws',
+                    help = 'Enable IPv4 WebSockets')
+        parser.add_option('-W', '--listen-ws', type = 'int', dest='ws_port',
+                    help = 'Websocket port to listen to')
         self.options, args = parser.parse_args(argv[1:])
         if args:
             raise ConfigError('Unexpected command line arguments')
