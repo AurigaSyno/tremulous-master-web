@@ -185,7 +185,7 @@ class Server(object):
     def send_challenge(self):
         '''Sends a getinfo challenge and records the current time'''
         self.challenge = challenge()
-        packet = '\xff\xff\xff\xffgetinfo ' + self.challenge
+        packet = bytes(('\xff\xff\xff\xffgetinfo ' + self.challenge), "utf-8")
         log(LOG_DEBUG, '>> {0}: {1!r}'.format(self, packet))
         safe_send(self.sock, packet, self.addr)
         self.set_timeout(time() + config.CHALLENGE_TIMEOUT)
@@ -415,6 +415,7 @@ def getservers(sock, addr, data):
             message += '\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
+            message = bytes(message, "utf-8")
             safe_send(sock, message, addr)
             index += 1
     npstr = '1 packet' if numpackets == 1 else '{0} packets'.format(numpackets)
@@ -427,7 +428,7 @@ def heartbeat(addr, data):
     creating it if necessary and adding it to the list.'''
     label = find_featured(addr)
     addrstr = '<< {0}:'.format(addr)
-    if 'dead' in data:
+    if b'dead' in data:
         if label is None:
             if addr in list(servers[None].keys()):
                 log(LOG_VERBOSE, addrstr, 'flatline, dropped')
@@ -454,7 +455,7 @@ def filterpacket(data, addr):
     # forging a packet with source port 0 can lead to an error on response
     if addr.port == 0:
         return 'invalid port'
-    if not data.startswith('\xff\xff\xff\xff'):
+    if not data.startswith(b'\xff\xff\xff\xff'):
         return 'no header'
     if config.ignore(addr.host):
         return 'blacklisted'
@@ -559,11 +560,11 @@ def mainloop():
             responses = [
                 # this looks like it should be a dict but since we use
                 # startswith it wouldn't really improve matters
-                ('gamestat', lambda s, a, d: gamestat(a, d)),
-                ('getmotd', getmotd),
-                ('getservers', getservers),
+                (b'gamestat', lambda s, a, d: gamestat(a, d)),
+                (b'getmotd', getmotd),
+                (b'getservers', getservers),
                 # getserversExt also starts with getservers
-                ('heartbeat', lambda s, a, d: heartbeat(a, d)),
+                (b'heartbeat', lambda s, a, d: heartbeat(a, d)),
                 # infoResponses will arrive on an outSock
             ]
             for (name, func) in responses:
