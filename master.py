@@ -538,14 +538,16 @@ try:
         outSocks[AF_INET6] = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
         outSocks[AF_INET6].bind((config.listen6_addr, config.challengeport))
 
-    if (config.ipv4 or config.ipv6) and config.use_ws and config.ws_port:
-        log(LOG_PRINT, 'WebSockets: Listening on', config.ws_port)
-        s = socket(AF_INET, SOCK_STREAM)
-        s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        s.bind((config.listen_addr, config.ws_port))
-        s.listen(5)
-        s.setblocking(False)
-        inSocks.append(s)
+    if (config.ipv4 or config.ipv6) and config.use_ws and config.ws_ports:
+        all_ws_ports = sorted(set(config.ws_ports))
+        log(LOG_PRINT, 'WebSockets: Listening on ports', ', '.join(str(port) for port in all_ws_ports))
+        for port in all_ws_ports:
+            s = socket(AF_INET, SOCK_STREAM)
+            s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+            s.bind((config.listen_addr, port))
+            s.listen(5)
+            s.setblocking(False)
+            inSocks.append(s)
         usingWs = True
 
     if not inSocks and not outSocks:

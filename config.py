@@ -240,8 +240,10 @@ class MasterConfig(object):
         parser.add_option('-w', '--use_ws', action = 'store_true',
                     default = True, dest = 'use_ws',
                     help = 'Enable IPv4 WebSockets')
-        parser.add_option('-W', '--listen-ws', type = 'int', dest='ws_port',
-                    help = 'Websocket port to listen to')
+        parser.add_option('-W', '--ws_ports', action='append', type = 'int',
+                           dest='ws_ports', help = 'Websocket ports for incoming requests. '
+                            'May be specified multiple times to listen on '
+                            'additional ports.', metavar = 'NUM')
         self.options, args = parser.parse_args(argv[1:])
         if args:
             raise ConfigError('Unexpected command line arguments')
