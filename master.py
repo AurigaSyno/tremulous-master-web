@@ -49,7 +49,7 @@ from time import time
 
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import (AcceptConnection, CloseConnection, BytesMessage,
-                            Message, Ping, Request, TextMessage)
+                            Ping, Pong, Request)
 
 # Local imports
 from config import config, ConfigError
@@ -648,7 +648,7 @@ def mainloop():
                             processmessage(sock, message_data, addr)
 
                         elif isinstance(event, Ping):
-                            outgoing_data = ws.send(event.response())
+                            outgoing_data = ws.send(Pong(payload=event.payload))
                             sock.sendall(outgoing_data)
 
                         elif isinstance(event, CloseConnection):
