@@ -654,7 +654,6 @@ def mainloop():
                             sock.sendall(outgoing_data)
 
                         elif isinstance(event, CloseConnection):
-                            print("Closing ws connection")
                             outgoing_data = ws.send(event.response())
                             sock.sendall(outgoing_data)
                             del ws_connections[sock]
