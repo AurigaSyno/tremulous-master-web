@@ -192,7 +192,7 @@ class Server(object):
     def send_challenge(self):
         '''Sends a getinfo challenge and records the current time'''
         self.challenge = challenge()
-        packet = bytes(('\xff\xff\xff\xffgetinfo ' + self.challenge), "utf-8")
+        packet = b'\xff\xff\xff\xffgetinfo ' + self.challenge.encode('ascii')
         log(LOG_DEBUG, '>> {0}: {1!r}'.format(self, packet))
         safe_send(self.sock, packet, self.addr)
         self.set_timeout(time() + config.CHALLENGE_TIMEOUT)
@@ -261,6 +261,8 @@ def safe_send(sock, data, addr):
         except sockerr as err:
             log(LOG_ERROR, 'ERROR: sending to', addr, 'failed with error:',
                 err.strerror)
+        except Exception as err:
+                log(LOG_ERROR, 'ERROR: sending to WebSocket', addr, 'failed:', str(err))
 
 def find_featured(addr):
     # docstring TODO
@@ -342,7 +344,7 @@ def getmotd(sock, addr, data):
     if not rinfo['motd']:
         return
 
-    response = bytes(('\xff\xff\xff\xffmotd {0}'.format(rinfo)), "utf-8")
+    response = b'\xff\xff\xff\xffmotd ' + str(rinfo).encode('ascii')
     log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, response))
     safe_send(sock, response, addr)
 
@@ -418,8 +420,10 @@ def getservers(sock, addr, data):
                     packets[None].append(filtered[:config.GSR_MAXSERVERS])
                     filtered = filtered[config.GSR_MAXSERVERS:]
 
-    start = '\xff\xff\xff\xffgetservers{0}Response'.format(
-                                      'Ext' if ext else '')
+    if ext:
+        start = b'\xff\xff\xff\xffgetserversExtResponse'
+    else:
+        start = b'\xff\xff\xff\xffgetserversResponse'
 
     index = 1
     numpackets = sum(len(ps) for ps in list(packets.values()))
@@ -433,12 +437,12 @@ def getservers(sock, addr, data):
         for packet in packs:
             message = start
             if ext:
-                message += '\0{0}\0{1}\0{2}'.format(index, numpackets, label)
-            message += ''.join(gsr_formataddr(s.addr) for s in packet)
-            message += '\\'
+                message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
+            message += b''.join(gsr_formataddr(s.addr) for s in packet)
+            message += b'\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
-            message = bytes(message, "utf-8")
+            print(message)
             safe_send(sock, message, addr)
             index += 1
     npstr = '1 packet' if numpackets == 1 else '{0} packets'.format(numpackets)
@@ -683,6 +687,9 @@ def mainloop():
                 log(LOG_VERBOSE, addrstr, 'rejected ({0})'.format(res))
                 continue
             data = data[4:] # skip header
+            #convert data to string
+            if isinstance(data, bytes):
+                data = data.decode('ascii')
             # the outSocks are for getinfo challenges, so any response should
             # be from a server already known to us
             label = find_featured(addr)
