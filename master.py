@@ -638,25 +638,26 @@ def mainloop():
 
                         if isinstance(event, Request):
                             if event.subprotocols:
-                                outgoing_data += ws.send(AcceptConnection(subprotocol=event.subprotocols[0]))
+                                outgoing_data = ws.send(AcceptConnection(subprotocol=event.subprotocols[0]))
                             else:
-                                outgoing_data += ws.send(AcceptConnection())
+                                outgoing_data = ws.send(AcceptConnection())
+                            sock.sendall(outgoing_data)
                         
                         elif isinstance(event, BytesMessage):
                             message_data = event.data
                             processmessage(sock, message_data, addr)
 
                         elif isinstance(event, Ping):
-                            outgoing_data += ws.send(event.response())
+                            outgoing_data = ws.send(event.response())
+                            sock.sendall(outgoing_data)
 
                         elif isinstance(event, CloseConnection):
                             print("Closing ws connection")
-                            outgoing_data += ws.send(event.response())
+                            outgoing_data = ws.send(event.response())
+                            sock.sendall(outgoing_data)
                             del ws_connections[sock]
                             sock.close()
                             break
-
-                    sock.sendall(outgoing_data)
 
                 except Exception as e:
                     log(LOG_ERROR, f"WebSocket error: {e}")
