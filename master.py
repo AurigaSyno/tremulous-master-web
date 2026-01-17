@@ -645,6 +645,8 @@ def mainloop():
                         
                         elif isinstance(event, BytesMessage):
                             message_data = event.data
+                            if(message_data.find(b'portx') != -1): #disregard emscripten port idenfier message
+                                break
                             processmessage(sock, message_data, addr)
 
                         elif isinstance(event, Ping):
