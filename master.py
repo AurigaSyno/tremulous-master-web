@@ -247,11 +247,13 @@ def safe_send(sock, data, addr):
         else:
             try:
                 ws = ws_connections[sock]['ws']
-                ws.send(BytesMessage(data=data))
-                sock.sendall(ws.data_to_send())
+                ws_data = ws.send(BytesMessage(data=data))
+                sock.sendall(ws_data)
             except sockerr as err:
                 log(LOG_ERROR, 'ERROR: sending to WebSocket', addr, 'failed with error:',
                     err.strerror)
+            except Exception as err:
+                log(LOG_ERROR, 'ERROR: sending to WebSocket', addr, 'failed:', str(err))
 
     else:
         try:
@@ -606,50 +608,61 @@ def mainloop():
     prune_timeouts()
 
     for sock in ready:
-        if usingWs and sock.type == SOCK_STREAM and sock in inSocks: # new ws connection
-            try:
-                ws_sock, addr = sock.accept()
-                ws_sock.setblocking(False)
-                ws = WSConnection(ConnectionType.SERVER)
-                ws_connections[ws_sock] = dict(ws=ws, addr=addr)
-                log(LOG_VERBOSE, f"New WebSocket connection from {addr}")
-            except Exception as e:
-                log(LOG_ERROR, f"Error accepting WebSocket connection: {e}")
-
-        elif sock in ws_connections:
-            try:
-                data = sock.recv(2048)
-
-                if not data:
-                    del ws_connections[sock]
-                    sock.close()
-                    continue
-
-                ws = ws_connections[sock]['ws']
-                addr = ws_connections[sock]['addr']
-                ws.receive_data(data)
-
-                for event in ws.events():
-                    if isinstance(event, Request):
-                        wsdata = ws.send(AcceptConnection())
-                        #safe_send(sock, ws.send(AcceptConnection()), addr)
-                        #ws.accept(event)
-                        sock.sendall(wsdata)
+        if usingWs and sock.type == SOCK_STREAM: #ws connection
+            if sock in inSocks: # new ws connection
+                try:
+                    ws_sock, addr = sock.accept()
+                    ws_sock.setblocking(False)
                     
-                    elif isinstance(event, BytesMessage):
-                        message_data = event.data
-                        processmessage(sock, message_data, addr)
+                    ws = WSConnection(ConnectionType.SERVER)
+                    ws_connections[ws_sock] = {'ws': ws, 'addr': addr}
+                    log(LOG_VERBOSE, f"New WebSocket connection from {addr}")
+                except Exception as e:
+                    log(LOG_ERROR, f"Error accepting WebSocket connection: {e}")
 
-                    elif isinstance(event, CloseConnection):
+            elif sock in ws_connections: #existing ws connection
+                try:
+                    data = sock.recv(4096)
+                    outgoing_data = b''
+
+                    if not data:
                         del ws_connections[sock]
                         sock.close()
-                        break
+                        continue
 
-            except Exception as e:
-                log(LOG_ERROR, f"WebSocket error: {e}")
-                if sock in ws_connections: #could be gone by this point
-                    del ws_connections[sock]
-                sock.close()
+                    ws = ws_connections[sock]['ws']
+                    addr = ws_connections[sock]['addr']
+                    ws.receive_data(data)
+
+                    for event in ws.events():
+
+                        if isinstance(event, Request):
+                            if event.subprotocols:
+                                outgoing_data += ws.send(AcceptConnection(subprotocol=event.subprotocols[0]))
+                            else:
+                                outgoing_data += ws.send(AcceptConnection())
+                        
+                        elif isinstance(event, BytesMessage):
+                            message_data = event.data
+                            processmessage(sock, message_data, addr)
+
+                        elif isinstance(event, Ping):
+                            outgoing_data += ws.send(event.response())
+
+                        elif isinstance(event, CloseConnection):
+                            print("Closing ws connection")
+                            outgoing_data += ws.send(event.response())
+                            del ws_connections[sock]
+                            sock.close()
+                            break
+
+                    sock.sendall(outgoing_data)
+
+                except Exception as e:
+                    log(LOG_ERROR, f"WebSocket error: {e}")
+                    if sock in ws_connections: #could be gone by this point
+                        del ws_connections[sock]
+                    sock.close()
 
         elif sock in inSocks: # udp
             # FIXME: 2048 magic number
