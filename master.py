@@ -362,19 +362,19 @@ def filterservers(slist, af, protocol, empty, full):
             and (full  or not s.full)]
 
 def gsr_formataddr(addr):
-    sep  = '\\' if addr.family == AF_INET else '/'
+    sep  = b'\\' if addr.family == AF_INET else b'/'
     host = inet_pton(addr.family, addr.host)
-    port = chr(addr.port >> 8) + chr(addr.port & 0xff)
+    port = bytes([addr.port >> 8, addr.port & 0xff])
     return sep + host + port
 
 def getservers(sock, addr, data):
     '''On a getservers or getserversExt, construct and send a response'''
 
     tokens = data.split()
-    ext = (tokens.pop(0) == 'getserversExt')
+    ext = (tokens.pop(0) == b'getserversExt')
     if ext:
         try:
-            game = tokens.pop(0)
+            game = tokens.pop(0).decode('ascii')
         except IndexError:
             game = ''
         if game != 'Tremulous':
@@ -382,14 +382,14 @@ def getservers(sock, addr, data):
                              'ignored'.format(addr))
             return
     try:
-        protocol = tokens.pop(0)
+        protocol = tokens.pop(0).decode('ascii')
     except IndexError:
         log(LOG_VERBOSE, '<< {0}: no protocol specified'.format(addr))
         return
-    empty, full = 'empty' in tokens, 'full' in tokens
+    empty, full = b'empty' in tokens, b'full' in tokens
     if ext:
-        family = (AF_INET  if 'ipv4' in tokens
-             else AF_INET6 if 'ipv6' in tokens
+        family = (AF_INET  if b'ipv4' in tokens
+             else AF_INET6 if b'ipv6' in tokens
              else AF_UNSPEC)
     else:
         family = AF_INET
