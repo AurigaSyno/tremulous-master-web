@@ -244,6 +244,13 @@ class MasterConfig(object):
                            dest='ws_ports', help = 'Websocket ports for incoming requests. '
                             'May be specified multiple times to listen on '
                             'additional ports.', metavar = 'NUM')
+        parser.add_option('-s', '--use_ws_ssl', action = 'store_true',
+                          default = True, dest = 'use_ws_ssl',
+                          help = 'Enable SSL/TLS support over WebSockets')
+        parser.add_option('-k', '--ws_ssl_key', type = 'str', dest = 'ws_ssl_key',
+                          help = 'SSL Key for WebSockets' )
+        parser.add_option('-K', '--ws_ssl_cert', type = 'str', dest = 'ws_ssl_cert',
+                          help = 'SSL Cert for WebSockets' )
         self.options, args = parser.parse_args(argv[1:])
         if args:
             raise ConfigError('Unexpected command line arguments')

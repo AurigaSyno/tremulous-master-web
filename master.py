@@ -47,6 +47,7 @@ from socket import (socket, error as sockerr, has_ipv6,
 from sys import exit, stderr
 from time import time
 
+import ssl
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import (AcceptConnection, CloseConnection, BytesMessage,
                             Ping, Pong, Request)
@@ -521,6 +522,8 @@ def serialise():
         f.write('\n'.join(str(s) for sl in list(servers.values()) for s in sl))
         log(LOG_PRINT, 'Wrote serverlist.txt')
 
+ws_ssl_context = None
+
 try:
     all_ports = sorted(set(config.ports + [config.challengeport]))
 
@@ -555,6 +558,18 @@ try:
             s.setblocking(False)
             inSocks.append(s)
         usingWs = True
+        if config.use_ws_ssl:
+            try:
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain( certfile=config.ws_ssl_cert,
+                                                keyfile=config.ws_ssl_key)
+                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                ws_ssl_context = ssl_context
+                log(LOG_PRINT, 'Created WebSockets SSL context')
+            except Exception as e:
+                log(LOG_ERROR, f'Failed to create SSL context: {e}')
+                ssl_context = None
+                ws_ssl_context = None
 
     if not inSocks and not outSocks:
         log(LOG_ERROR, 'Error: Not listening on any sockets, aborting')
@@ -616,6 +631,14 @@ def mainloop():
             if sock in inSocks: # new ws connection
                 try:
                     ws_sock, addr = sock.accept()
+                    if ws_ssl_context:
+                        ws_sock = ws_ssl_context.wrap_socket(
+                            ws_sock,
+                            server_side=True,
+                            do_handshake_on_connect=False
+                            )
+                        ws_sock.do_handshake()
+
                     ws_sock.setblocking(False)
                     
                     ws = WSConnection(ConnectionType.SERVER)
