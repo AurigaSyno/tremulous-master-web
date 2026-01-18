@@ -1,1 +1,1 @@
-python master.py --verbose 4 --max-servers 256 --ipv4 --listen-addr localhost --use_ws --use_ws_ssl --ws_ssl_cert "server.crt" --ws_ssl_key "server.key" --ws_ports 40700 --ws_ports 40710 --ws_ports 40720 --port 30700 --port 30705 --port 30710
+python master.py --verbose 4 --max-servers 256 --ipv4 --listen-addr localhost --use_ws --use_ws_ssl --ws_ssl_cert "server.crt" --ws_ssl_key "server.key" --ws_ports 30700 --ws_ports 30700 --ws_ports 30710 --port 30700 --port 30700 --port 30710
