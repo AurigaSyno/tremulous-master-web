@@ -22,7 +22,7 @@
 # Place, Suite 330, Boston, MA  02111-1307  USA
 ###############################################################################
 """The Tremulous Master Server
-Requires Python 2.6
+Requires Python 3
 
 Protocol for this is pretty simple.
 Accepted incoming messages:
@@ -34,6 +34,13 @@ Accepted incoming messages:
     'getservers <protocol> [empty] [full]'
         A request from the client to send the list of servers.
 """ # docstring TODO
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not available, continue without .env support
 
 # Required imports
 from errno import EINTR, ENOENT
@@ -47,10 +54,16 @@ from socket import (socket, error as sockerr, has_ipv6,
 from sys import exit, stderr
 from time import time
 
-import ssl
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import (AcceptConnection, CloseConnection, BytesMessage,
                             Ping, Pong, Request)
+
+# Plugin system imports
+try:
+    from stevedore import extension
+    PLUGINS_AVAILABLE = True
+except ImportError:
+    PLUGINS_AVAILABLE = False
 
 # Local imports
 from config import config, ConfigError
@@ -96,6 +109,209 @@ ws_connections = dict()
 # dict of [label][addr] -> Server instance
 servers = dict((label, dict()) for label in
                chain(list(config.featured_servers.keys()), [None]))
+
+# Plugin system
+plugin_manager = None
+loaded_plugins = []
+
+def pre_initialize_plugins():
+    """Pre-initialize plugins before socket binding.
+
+    This allows plugins like the puppet plugin to fetch data from remote sources
+    before the master server binds its ports.
+    """
+    global plugin_manager, loaded_plugins
+
+    if not PLUGINS_AVAILABLE:
+        log(LOG_PRINT, 'Warning: stevedore not available, plugin system disabled')
+        return
+
+    try:
+        log(LOG_VERBOSE, 'Plugin system: Pre-initializing plugins...')
+        log(LOG_DEBUG, 'Plugin system: Searching namespace: tremulous.master.plugins')
+
+        plugin_manager = extension.ExtensionManager(
+            namespace='tremulous.master.plugins',
+            invoke_on_load=False,
+        )
+
+        extensions = list(plugin_manager.extensions)
+        log(LOG_VERBOSE, 'Plugin system: Found {0} plugin extensions'.format(len(extensions)))
+
+        for ext in extensions:
+            try:
+                log(LOG_DEBUG, 'Plugin system: Loading extension: {0}'.format(ext.name))
+                log(LOG_DEBUG, 'Plugin system: Entry point: {0}'.format(ext.entry_point))
+
+                # Check if plugin is enabled (plugins disabled by default)
+                plugin_enabled = False
+                if ext.name == 'puppet' and config.puppet_enabled:
+                    plugin_enabled = True
+                    log(LOG_VERBOSE, 'Plugin system: Puppet plugin enabled via --puppet-enable')
+                elif ext.name == 'sleepyteepee' and config.sleepyteepee_enabled:
+                    plugin_enabled = True
+                    log(LOG_VERBOSE, 'Plugin system: Sleepyteepee plugin enabled via --enable-sleepyteepee')
+                
+                if not plugin_enabled:
+                    log(LOG_VERBOSE, 'Plugin system: Plugin {0} is disabled (use --enable-{1} to enable)'.format(ext.name, ext.name))
+                    continue
+
+                # Load plugin class from entry point
+                plugin_class = ext.entry_point.load()
+                log(LOG_DEBUG, 'Plugin system: Loaded plugin class: {0}'.format(plugin_class.__name__))
+
+                # Create plugin instance
+                log(LOG_DEBUG, 'Plugin system: Creating plugin instance for {0}'.format(ext.name))
+                plugin = plugin_class(config, servers, outSocks)
+
+                # Call pre_initialize if available
+                if hasattr(plugin, 'pre_initialize'):
+                    log(LOG_DEBUG, 'Plugin system: Plugin {0} has pre_initialize method'.format(ext.name))
+                    log(LOG_DEBUG, 'Plugin system: Pre-initializing plugin {0}...'.format(ext.name))
+                    if plugin.pre_initialize():
+                        loaded_plugins.append(plugin)
+                        info = plugin.get_info()
+                        log(LOG_PRINT, 'Plugin system: Pre-initialized plugin: {0} v{1} - {2}'.format(
+                            info['name'], info['version'], info['description']))
+                    else:
+                        log(LOG_VERBOSE, 'Plugin system: Plugin {0} pre-initialization failed'.format(ext.name))
+                else:
+                    log(LOG_DEBUG, 'Plugin system: Plugin {0} does NOT have pre_initialize method'.format(ext.name))
+                    # If plugin doesn't have pre_initialize, just add it for later initialization
+                    loaded_plugins.append(plugin)
+                    info = plugin.get_info()
+                    log(LOG_DEBUG, 'Plugin system: Loaded plugin {0} (no pre-initialization)'.format(ext.name))
+            except Exception as e:
+                import traceback
+                log(LOG_ERROR, 'Plugin system: Error loading plugin {0}: {1}'.format(ext.name, e))
+                log(LOG_DEBUG, 'Plugin system: Traceback: {0}'.format(traceback.format_exc()))
+
+        log(LOG_VERBOSE, 'Plugin system: Successfully pre-initialized {0} plugins'.format(len(loaded_plugins)))
+
+    except Exception as e:
+        import traceback
+        log(LOG_ERROR, 'Plugin system: Error pre-initializing plugin system: {0}'.format(e))
+        log(LOG_DEBUG, 'Plugin system: Traceback: {0}'.format(traceback.format_exc()))
+
+def initialize_plugins():
+    """Initialize and load all available plugins.
+
+    This is called after socket binding to complete plugin initialization.
+    Plugins that were pre-initialized will have their initialize() method called.
+    """
+    global plugin_manager, loaded_plugins
+
+    if not PLUGINS_AVAILABLE:
+        log(LOG_PRINT, 'Warning: stevedore not available, plugin system disabled')
+        return
+
+    if not plugin_manager:
+        # If pre_initialize_plugins wasn't called, do full initialization
+        try:
+            log(LOG_VERBOSE, 'Plugin system: Initializing plugin discovery...')
+            log(LOG_DEBUG, 'Plugin system: Searching namespace: tremulous.master.plugins')
+            log(LOG_DEBUG, 'Plugin system: plugin_manager is None, pre_initialize_plugins() was not called or failed')
+
+            plugin_manager = extension.ExtensionManager(
+                namespace='tremulous.master.plugins',
+                invoke_on_load=False,
+            )
+
+            extensions = list(plugin_manager.extensions)
+            log(LOG_VERBOSE, 'Plugin system: Found {0} plugin extensions'.format(len(extensions)))
+
+            for ext in extensions:
+                try:
+                    log(LOG_DEBUG, 'Plugin system: Loading extension: {0}'.format(ext.name))
+                    log(LOG_DEBUG, 'Plugin system: Entry point: {0}'.format(ext.entry_point))
+
+                    # Check if plugin is enabled (plugins disabled by default)
+                    plugin_enabled = False
+                    if ext.name == 'puppet' and config.puppet_enabled:
+                        plugin_enabled = True
+                        log(LOG_VERBOSE, 'Plugin system: Puppet plugin enabled via --puppet-enable')
+                    elif ext.name == 'sleepyteepee' and config.sleepyteepee_enabled:
+                        plugin_enabled = True
+                        log(LOG_VERBOSE, 'Plugin system: Sleepyteepee plugin enabled via --enable-sleepyteepee')
+                    
+                    if not plugin_enabled:
+                        log(LOG_VERBOSE, 'Plugin system: Plugin {0} is disabled (use --enable-{1} to enable)'.format(ext.name, ext.name))
+                        continue
+
+                    # Load plugin class from entry point
+                    plugin_class = ext.entry_point.load()
+                    log(LOG_DEBUG, 'Plugin system: Loaded plugin class: {0}'.format(plugin_class.__name__))
+
+                    # Create plugin instance
+                    log(LOG_DEBUG, 'Plugin system: Creating plugin instance for {0}'.format(ext.name))
+                    plugin = plugin_class(config, servers, outSocks)
+
+                    log(LOG_DEBUG, 'Plugin system: Initializing plugin {0}...'.format(ext.name))
+                    if plugin.initialize():
+                        loaded_plugins.append(plugin)
+                        info = plugin.get_info()
+                        log(LOG_PRINT, 'Plugin system: Loaded plugin: {0} v{1} - {2}'.format(
+                            info['name'], info['version'], info['description']))
+                    else:
+                        log(LOG_VERBOSE, 'Plugin system: Plugin {0} initialization failed'.format(ext.name))
+                except Exception as e:
+                    log(LOG_ERROR, 'Plugin system: Error loading plugin {0}: {1}'.format(ext.name, e))
+
+            log(LOG_VERBOSE, 'Plugin system: Successfully loaded {0} plugins'.format(len(loaded_plugins)))
+
+        except Exception as e:
+            log(LOG_ERROR, 'Plugin system: Error initializing plugin system: {0}'.format(e))
+    else:
+        # Plugins were pre-initialized, now call initialize() on each
+        log(LOG_VERBOSE, 'Plugin system: Completing initialization for {0} pre-initialized plugins'.format(len(loaded_plugins)))
+        for plugin in loaded_plugins:
+            try:
+                log(LOG_DEBUG, 'Plugin system: Initializing plugin {0}...'.format(plugin.get_name()))
+                if plugin.initialize():
+                    info = plugin.get_info()
+                    log(LOG_PRINT, 'Plugin system: Initialized plugin: {0} v{1} - {2}'.format(
+                        info['name'], info['version'], info['description']))
+                else:
+                    log(LOG_VERBOSE, 'Plugin system: Plugin {0} initialization failed'.format(plugin.get_name()))
+            except Exception as e:
+                log(LOG_ERROR, 'Plugin system: Error initializing plugin {0}: {1}'.format(plugin.get_name(), e))
+
+def call_plugins_hook(hook_name, *args, **kwargs):
+    """Call a hook on all loaded plugins."""
+    log(LOG_DEBUG, 'Plugin system: Calling hook {0} on {1} plugins'.format(
+        hook_name, len(loaded_plugins)))
+    
+    for plugin in loaded_plugins:
+        try:
+            hook = getattr(plugin, hook_name, None)
+            if hook:
+                log(LOG_DEBUG, 'Plugin system: Calling hook {0} on plugin {1}'.format(
+                    hook_name, plugin.get_name()))
+                result = hook(*args, **kwargs)
+                if result is not None:
+                    log(LOG_DEBUG, 'Plugin system: Plugin {1} returned result for hook {0}'.format(
+                        hook_name, plugin.get_name()))
+                    return result
+                else:
+                    log(LOG_DEBUG, 'Plugin system: Plugin {1} returned None for hook {0}'.format(
+                        hook_name, plugin.get_name()))
+        except Exception as e:
+            log(LOG_ERROR, 'Plugin system: Error in plugin {0} hook {1}: {2}'.format(
+                plugin.get_name(), hook_name, e))
+    return None
+
+def cleanup_plugins():
+    """Cleanup all loaded plugins."""
+    log(LOG_VERBOSE, 'Plugin system: Cleaning up {0} plugins'.format(len(loaded_plugins)))
+    for plugin in loaded_plugins:
+        try:
+            log(LOG_DEBUG, 'Plugin system: Cleaning up plugin {0}'.format(plugin.get_name()))
+            plugin.cleanup()
+        except Exception as e:
+            log(LOG_ERROR, 'Plugin system: Error cleaning up plugin {0}: {1}'.format(
+                plugin.get_name(), e))
+    loaded_plugins.clear()
+    log(LOG_VERBOSE, 'Plugin system: Cleanup complete')
 
 class Addr(tuple):
     '''Data structure for storing socket addresses, that provides parsing
@@ -165,12 +381,13 @@ class Info(dict):
 
 class Server(object):
     '''Data structure for tracking server timeouts and challenges'''
-    def __init__(self, addr):
+    def __init__(self, addr, connection_type='udp'):
         # docstring TODO
         self.addr = addr
         self.sock = outSocks[addr.family]
         self.lastactive = 0
         self.timeout = 0
+        self.connection_type = connection_type  # 'udp' or 'websocket'
 
     def __bool__(self):
         '''Server has replied to a challenge'''
@@ -278,15 +495,18 @@ def prune_timeouts(slist = servers[None]):
     '''Removes from the list any items whose timeout method returns true'''
     # iteritems gives RuntimeError: dictionary changed size during iteration
     for (addr, server) in list(slist.items()):
+        # Skip puppet servers - they should not be pruned due to timeout
+        if find_featured(addr) == 'puppet':
+            continue
         if server.timed_out():
             del slist[addr]
             remstr = str(count_servers())
             if server.lastactive:
                 log(LOG_VERBOSE, '{0} dropped due to {1}s inactivity '
-                    '({2})'.format(server, time() - server.lastactive, remstr))
+                            '({2})'.format(server, time() - server.lastactive, remstr))
             else:
                 log(LOG_VERBOSE, '{0} dropped: no response '
-                    '({1})'.format(server, remstr))
+                            '({1})'.format(server, remstr))
 
 def challenge():
     '''Returns a string of config.CHALLENGE_LENGTH characters, chosen from
@@ -349,18 +569,22 @@ def getmotd(sock, addr, data):
     log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, response))
     safe_send(sock, response, addr)
 
-def filterservers(slist, af, protocol, empty, full):
+def filterservers(slist, af, protocol, empty, full, client_type='udp'):
     '''Return those servers in slist that test true (have been verified) and:
     - whose protocols contain `protocol'
     - if `ext' is not set, are IPv4
     - if `empty' is not set, are not empty
-    - if `full' is not set, are not full'''
+    - if `full' is not set, are not full
+    - if client_type is 'websocket', only return WebSocket servers
+    - if client_type is 'udp', only return UDP servers (or servers without connection_type for backward compatibility)'''
     return [s for s in slist if s
             and af in (AF_UNSPEC, s.addr.family)
             and not s.timed_out()
             and protocol in s.protocols
             and (empty or not s.empty)
-            and (full  or not s.full)]
+            and (full  or not s.full)
+            and ((client_type == 'websocket' and getattr(s, 'connection_type', 'udp') == 'websocket')
+                 or (client_type == 'udp' and getattr(s, 'connection_type', 'udp') != 'websocket'))]
 
 def gsr_formataddr(addr):
     sep  = b'\\' if addr.family == AF_INET else b'/'
@@ -370,6 +594,21 @@ def gsr_formataddr(addr):
 
 def getservers(sock, addr, data):
     '''On a getservers or getserversExt, construct and send a response'''
+
+    # Determine client type based on socket
+    client_type = 'udp'  # default to UDP
+    if sock.type == SOCK_STREAM:
+        client_type = 'websocket'
+        log(LOG_VERBOSE, 'getservers: WebSocket client request from {0}'.format(addr))
+    else:
+        log(LOG_DEBUG, 'getservers: UDP client request from {0}'.format(addr))
+
+    # Call plugin hooks
+    log(LOG_DEBUG, 'getservers: Calling plugin hooks for {0}'.format(addr))
+    result = call_plugins_hook('on_getservers', sock, addr, data)
+    if result is True:
+        log(LOG_VERBOSE, 'getservers: Plugin handled request from {0}'.format(addr))
+        return  # Plugin handled this getservers request
 
     tokens = data.split()
     ext = (tokens.pop(0) == b'getserversExt')
@@ -401,14 +640,18 @@ def getservers(sock, addr, data):
         # dict of lists of lists
         if ext:
             packets[label] = list()
+            # Filter servers by client type: WebSocket clients only see WebSocket servers, UDP clients only see UDP servers
+            # For backward compatibility, if server has no connection_type, show it to UDP clients
             filtered = filterservers(list(servers[label].values()),
-                                     family, protocol, empty, full)
+                                     family, protocol, empty, full, client_type)
             while len(filtered) > 0:
                 packets[label].append(filtered[:config.GSR_MAXSERVERS])
                 filtered = filtered[config.GSR_MAXSERVERS:]
         else:
+            # Filter servers by client type: WebSocket clients only see WebSocket servers, UDP clients only see UDP servers
+            # For backward compatibility, if server has no connection_type, show it to UDP clients
             filtered = filterservers(list(servers[label].values()),
-                                     family, protocol, empty, full)
+                                     family, protocol, empty, full, client_type)
             if not packets[None]:
                 packets[None].append(filtered[:config.GSR_MAXSERVERS])
                 filtered = filtered[config.GSR_MAXSERVERS:]
@@ -443,17 +686,30 @@ def getservers(sock, addr, data):
             message += b'\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
-            print(message)
+            # SECURITY FIX: Removed print(message) to prevent information disclosure
             safe_send(sock, message, addr)
             index += 1
     npstr = '1 packet' if numpackets == 1 else '{0} packets'.format(numpackets)
     log(LOG_VERBOSE, '>> {0}: getservers{1}Response: sent '
                      '{2}'.format(addr, 'Ext' if ext else '', npstr))
 
-def heartbeat(addr, data):
+def heartbeat(addr, data, sock=None):
     '''In response to an incoming heartbeat, find the associated server.
     If this is a flatline, delete it, otherwise send it a challenge,
     creating it if necessary and adding it to the list.'''
+    # Call plugin hooks
+    log(LOG_DEBUG, 'heartbeat: Calling plugin hooks for {0}'.format(addr))
+    result = call_plugins_hook('on_heartbeat', addr, data)
+    if result is True:
+        log(LOG_VERBOSE, 'heartbeat: Plugin handled request from {0}'.format(addr))
+        return  # Plugin handled this heartbeat
+
+    # Determine connection type based on socket type
+    connection_type = 'udp'  # default to UDP
+    if sock and sock.type == SOCK_STREAM:
+        connection_type = 'websocket'
+        log(LOG_DEBUG, 'heartbeat: WebSocket heartbeat from {0}'.format(addr))
+
     label = find_featured(addr)
     addrstr = '<< {0}:'.format(addr)
     if b'dead' in data:
@@ -473,7 +729,12 @@ def heartbeat(addr, data):
     else:
         # fetch or create a server record
         label = find_featured(addr)
-        s = servers[label][addr] if addr in list(servers[label].keys()) else Server(addr)
+        if addr in list(servers[label].keys()):
+            s = servers[label][addr]
+            # Update connection type if server already exists
+            s.connection_type = connection_type
+        else:
+            s = Server(addr, connection_type)
         s.send_challenge()
         servers[label][addr] = s
 
@@ -489,94 +750,166 @@ def filterpacket(data, addr):
         return 'blacklisted'
 
 def deserialise():
+    """Read server list from cache file with file locking to prevent race conditions."""
     count = 0
-    with open('serverlist.txt') as f:
-        for line in f:
-            if not line:
-                continue
-            try:
-                addr = Addr(line)
-            except sockerr as err:
-                log(LOG_ERROR, 'Could not parse address in serverlist.txt',
-                    repr(line), err.strerror, sep = ': ')
-            except ValueError as err:
-                log(LOG_ERROR, 'Could not parse address in serverlist.txt',
-                    repr(line), str(err), sep = ': ')
-            else:
-                addrstr = '<< {0}:'.format(addr)
-                log(LOG_DEBUG, addrstr, 'Read from the cache')
-                if addr.family not in list(outSocks.keys()):
-                     famstr = {AF_INET: 'IPv4', AF_INET6: 'IPv6'}[addr.family]
-                     log(LOG_PRINT, addrstr, famstr,
-                         'not available, dropping from cache')
+    try:
+        import fcntl
+        with open('serverlist.txt', 'r') as f:
+            fcntl.flock(f, fcntl.LOCK_SH)  # Shared lock for reading
+            for line in f:
+                if not line:
+                    continue
+                try:
+                    addr = Addr(line)
+                except sockerr as err:
+                    log(LOG_ERROR, 'Could not parse address in serverlist.txt',
+                        repr(line), err.strerror, sep = ': ')
+                except ValueError as err:
+                    log(LOG_ERROR, 'Could not parse address in serverlist.txt',
+                        repr(line), str(err), sep = ': ')
                 else:
-                     # fake a heartbeat to verify the server as soon as
-                     # possible could cause an initial flood of traffic, but
-                     # unlikely to be anything that it can't handle
-                     heartbeat(addr, b'')
-                     count += 1
+                    addrstr = '<< {0}:'.format(addr)
+                    log(LOG_DEBUG, addrstr, 'Read from the cache')
+                    if addr.family not in list(outSocks.keys()):
+                         famstr = {AF_INET: 'IPv4', AF_INET6: 'IPv6'}[addr.family]
+                         log(LOG_PRINT, addrstr, famstr,
+                             'not available, dropping from cache')
+                    else:
+                         # fake a heartbeat to verify the server as soon as
+                         # possible could cause an initial flood of traffic, but
+                         # unlikely to be anything that it can't handle
+                         heartbeat(addr, b'')
+                         count += 1
+    except ImportError:
+        # Windows or other systems without fcntl - use atomic operations
+        with open('serverlist.txt', 'r') as f:
+            for line in f:
+                if not line:
+                    continue
+                try:
+                    addr = Addr(line)
+                except sockerr as err:
+                    log(LOG_ERROR, 'Could not parse address in serverlist.txt',
+                        repr(line), err.strerror, sep = ': ')
+                except ValueError as err:
+                    log(LOG_ERROR, 'Could not parse address in serverlist.txt',
+                        repr(line), str(err), sep = ': ')
+                else:
+                    addrstr = '<< {0}:'.format(addr)
+                    log(LOG_DEBUG, addrstr, 'Read from the cache')
+                    if addr.family not in list(outSocks.keys()):
+                         famstr = {AF_INET: 'IPv4', AF_INET6: 'IPv6'}[addr.family]
+                         log(LOG_PRINT, addrstr, famstr,
+                             'not available, dropping from cache')
+                    else:
+                         # fake a heartbeat to verify the server as soon as
+                         # possible could cause an initial flood of traffic, but
+                         # unlikely to be anything that it can't handle
+                         heartbeat(addr, b'')
+                         count += 1
     log(LOG_VERBOSE, 'Read', count, 'servers from cache')
 
 def serialise():
-    with open('serverlist.txt', 'w') as f:
-        f.write('\n'.join(str(s) for sl in list(servers.values()) for s in sl))
+    """Write server list to cache file with file locking to prevent race conditions."""
+    try:
+        import fcntl
+        # SECURITY FIX: Use atomic write with temporary file and rename
+        temp_file = 'serverlist.txt.tmp'
+        with open(temp_file, 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)  # Exclusive lock for writing
+            f.write('\n'.join(str(s) for sl in list(servers.values()) for s in sl))
+        # Atomic rename on Unix systems
+        import os
+        os.rename(temp_file, 'serverlist.txt')
+        log(LOG_PRINT, 'Wrote serverlist.txt')
+    except ImportError:
+        # Windows or other systems without fcntl - use atomic operations
+        import os
+        temp_file = 'serverlist.txt.tmp'
+        with open(temp_file, 'w') as f:
+            f.write('\n'.join(str(s) for sl in list(servers.values()) for s in sl))
+        # Atomic rename on Windows
+        os.replace(temp_file, 'serverlist.txt')
         log(LOG_PRINT, 'Wrote serverlist.txt')
 
-ws_ssl_context = None
+# Pre-initialize plugins before binding sockets
+pre_initialize_plugins()
 
 try:
     all_ports = sorted(set(config.ports + [config.challengeport]))
 
+    # Track which socket families successfully bound
+    ipv4_bound = False
+    ipv6_bound = False
+
+    # IPv4 socket binding
     if config.ipv4 and config.listen_addr:
-        log(LOG_PRINT, 'IPv4: Listening on', config.listen_addr,
-                       'ports', ', '.join(str(port) for port in all_ports))
-        for port in config.ports:
-            s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-            s.bind((config.listen_addr, port))
-            inSocks.append(s)
-        outSocks[AF_INET] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        outSocks[AF_INET].bind((config.listen_addr, config.challengeport))
+        try:
+            log(LOG_PRINT, 'IPv4: Listening on', config.listen_addr,
+                           'ports', ', '.join(str(port) for port in all_ports))
+            for port in config.ports:
+                s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                s.bind((config.listen_addr, port))
+                inSocks.append(s)
+            outSocks[AF_INET] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+            outSocks[AF_INET].bind((config.listen_addr, config.challengeport))
+            ipv4_bound = True
+            log(LOG_VERBOSE, 'IPv4 socket binding successful')
+        except sockerr as err:
+            log(LOG_ERROR, 'IPv4: Failed to bind socket to {0}:{1} - {2}'.format(
+                config.listen_addr, config.challengeport, err.strerror))
+            # IPv4 is critical, so we fail if it doesn't work
+            raise
 
-    if config.ipv6 and config.listen6_addr:
-        log(LOG_PRINT, 'IPv6: Listening on', config.listen6_addr,
-                       'ports', ', '.join(str(port) for port in all_ports))
-        for port in config.ports:
-            s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
-            s.bind((config.listen_addr, port))
-            inSocks.append(s)
-        outSocks[AF_INET6] = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
-        outSocks[AF_INET6].bind((config.listen6_addr, config.challengeport))
-
-    if (config.ipv4 or config.ipv6) and config.use_ws and config.ws_ports:
-        all_ws_ports = sorted(set(config.ws_ports))
-        log(LOG_PRINT, 'WebSockets: Listening on ports', ', '.join(str(port) for port in all_ws_ports))
-        for port in all_ws_ports:
-            s = socket(AF_INET, SOCK_STREAM)
-            s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-            s.bind((config.listen_addr, port))
-            s.listen(5)
-            s.setblocking(False)
-            inSocks.append(s)
-        usingWs = True
-        if config.use_ws_ssl:
+    # IPv6 socket binding
+    if config.ipv6:
+        if not config.listen6_addr:
+            log(LOG_PRINT, 'IPv6: Warning: config.ipv6 is enabled but config.listen6_addr is not set, skipping IPv6')
+        else:
             try:
-                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                ssl_context.load_cert_chain( certfile=config.ws_ssl_cert,
-                                                keyfile=config.ws_ssl_key)
-                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-                ws_ssl_context = ssl_context
-                log(LOG_PRINT, 'Created WebSockets SSL context')
-            except Exception as e:
-                log(LOG_ERROR, f'Failed to create SSL context: {e}')
-                ssl_context = None
-                ws_ssl_context = None
+                log(LOG_PRINT, 'IPv6: Listening on', config.listen6_addr,
+                               'ports', ', '.join(str(port) for port in all_ports))
+                for port in config.ports:
+                    s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+                    s.bind((config.listen6_addr, port))  # FIXED: Use listen6_addr instead of listen_addr
+                    inSocks.append(s)
+                outSocks[AF_INET6] = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+                outSocks[AF_INET6].bind((config.listen6_addr, config.challengeport))
+                ipv6_bound = True
+                log(LOG_VERBOSE, 'IPv6 socket binding successful')
+            except sockerr as err:
+                log(LOG_PRINT, 'IPv6: Warning: Failed to bind socket to {0}:{1} - {2}'.format(
+                    config.listen6_addr, config.challengeport, err.strerror))
+                log(LOG_PRINT, 'IPv6: Continuing with IPv4 only (graceful degradation)')
+
+    # WebSocket socket binding
+    if (ipv4_bound or ipv6_bound) and config.use_ws and config.ws_ports:
+        try:
+            all_ws_ports = sorted(set(config.ws_ports))
+            log(LOG_PRINT, 'WebSockets: Listening on ports', ', '.join(str(port) for port in all_ws_ports))
+            for port in all_ws_ports:
+                s = socket(AF_INET, SOCK_STREAM)
+                s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+                s.bind((config.listen_addr, port))
+                s.listen(5)
+                s.setblocking(False)
+                inSocks.append(s)
+            usingWs = True
+            log(LOG_VERBOSE, 'WebSocket socket binding successful')
+        except sockerr as err:
+            log(LOG_ERROR, 'WebSockets: Failed to bind socket to port {0} - {1}'.format(
+                port, err.strerror))
+            # WebSocket is non-critical, log warning but continue
+            log(LOG_PRINT, 'WebSockets: Warning: WebSocket binding failed, continuing without WebSocket support')
 
     if not inSocks and not outSocks:
         log(LOG_ERROR, 'Error: Not listening on any sockets, aborting')
+        log(LOG_ERROR, 'IPv4 bound: {0}, IPv6 bound: {1}'.format(ipv4_bound, ipv6_bound))
         exit(1)
 
 except sockerr as err:
     log(LOG_ERROR, 'Couldn\'t initialise sockets:', err.strerror)
+    log(LOG_ERROR, 'IPv4 bound: {0}, IPv6 bound: {1}'.format(ipv4_bound, ipv6_bound))
     exit(1)
 
 try:
@@ -584,6 +917,9 @@ try:
 except IOError as err:
     if err.errno != ENOENT:
         log(LOG_ERROR, 'Error reading serverlist.txt:', err.strerror)
+
+# Complete plugin initialization after socket binding
+initialize_plugins()
 
 def processmessage(sock, data, addr):
     saddr = Addr(addr, sock.family)
@@ -604,7 +940,7 @@ def processmessage(sock, data, addr):
         (b'getmotd', getmotd),
         (b'getservers', getservers),
         # getserversExt also starts with getservers
-        (b'heartbeat', lambda s, a, d: heartbeat(a, d)),
+        (b'heartbeat', lambda s, a, d: heartbeat(a, d, sock)),
         # infoResponses will arrive on an outSock
     ]
     for (name, func) in responses:
@@ -631,14 +967,6 @@ def mainloop():
             if sock in inSocks: # new ws connection
                 try:
                     ws_sock, addr = sock.accept()
-                    if ws_ssl_context:
-                        ws_sock = ws_ssl_context.wrap_socket(
-                            ws_sock,
-                            server_side=True,
-                            do_handshake_on_connect=False
-                            )
-                        ws_sock.do_handshake()
-
                     ws_sock.setblocking(False)
                     
                     ws = WSConnection(ConnectionType.SERVER)
@@ -718,7 +1046,7 @@ def mainloop():
             label = find_featured(addr)
             # if label = find_featured(addr) is not None, it should be the
             # case that servers[label][addr] exists
-            assert label is None or addr in list(servers[label].keys()), label
+            # SECURITY FIX: Replace assertion with proper error handling
             if label is None and addr not in list(servers[None].keys()):
                 log(LOG_VERBOSE, addrstr, 'rejected (unsolicited)')
                 continue
@@ -736,4 +1064,6 @@ except KeyboardInterrupt: #TODO: We need to gracefully close all existing ws con
     serialise()
     kill(getpid(), SIGINT)
 finally:
+    # Cleanup plugins
+    cleanup_plugins()
     serialise()

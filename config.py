@@ -62,6 +62,7 @@ ignore(addr):
 # Required imports
 from errno import ENOENT, EIO
 from optparse import OptionParser, Values
+from os import getenv
 from sys import argv, exit, stdout
 from time import strftime
 
@@ -153,6 +154,16 @@ class MasterConfig(object):
         self.FEATURED_FILE = 'featured.txt'
         self.MOTD_FILE = 'motd.txt'
 
+        # Plugin configuration - plugins disabled by default, must be explicitly enabled
+        self.puppet_remote_master = None
+        self.puppet_remote_port = 30710
+        self.puppet_protocol = '71'  # Default protocol version
+        self.puppet_use_websocket = False  # Use WebSocket instead of UDP
+        self.puppet_interval = 300  # 5 minutes
+        self.puppet_enabled = False
+        self.puppet_run_once = False  # If True, only run sync once and exit (don't start background thread)
+        self.sleepyteepee_enabled = False  # Sleepyteepee REST API plugin
+
     def __init__(self, vlevel = LOG_PRINT):
         # docstring TODO
         # Set this early so that self.log can be used immediately
@@ -186,13 +197,13 @@ class MasterConfig(object):
         parser.add_option('-h', '--help', action = 'store_true',
                           help = 'Display this help and exit')
         # options other than --help are in loose alphabetical order
-        parser.add_option('-4', '--ipv4', action = 'store_false',
-                    default = True, dest = 'ipv6',
-                    help = 'Only use IPv4')
+        parser.add_option('-4', '--ipv4', action = 'store_true',
+                    default = True, dest = 'ipv4',
+                    help = 'Use IPv4 (enabled by default)')
         if has_ipv6:
-            parser.add_option('-6', '--ipv6', action = 'store_false',
-                              default = True, dest = 'ipv4',
-                              help = 'Only use IPv6')
+            parser.add_option('-6', '--ipv6', action = 'store_true',
+                              default = False, dest = 'ipv6',
+                              help = 'Enable IPv6 (disabled by default)')
         # a better error message here for invalid values would be nice
         parser.add_option('-d', '--db', help = 'Database backend to use, '
                           '<none|tdb|sqlite|auto>',
@@ -204,13 +215,15 @@ class MasterConfig(object):
                               metavar = 'DIR')
         parser.add_option('-l', '--listen-addr',
                           help = 'IPv4 address to listen to',
-                          metavar = 'ADDR')
+                          metavar = 'ADDR',
+                          default = getenv('LISTEN_ADDR'))
         if has_ipv6:
             # Can we put this in the conditional above without spoiling
             # the ordering?
             parser.add_option('-L', '--listen6-addr',
-                              help = 'IPv6 address to listen to',
-                              metavar = 'ADDR')
+                              help = 'IPv6 address to listen to (default: :: if --ipv6 is used)',
+                              metavar = 'ADDR',
+                              default = getenv('LISTEN6_ADDR'))
         parser.add_option('-n', '--max-servers', type = 'int',
                           help = 'Maximum number of servers to track',
                           metavar = 'NUM')
@@ -242,15 +255,51 @@ class MasterConfig(object):
                     help = 'Enable IPv4 WebSockets')
         parser.add_option('-W', '--ws_ports', action='append', type = 'int',
                            dest='ws_ports', help = 'Websocket ports for incoming requests. '
-                            'May be specified multiple times to listen on '
-                            'additional ports.', metavar = 'NUM')
-        parser.add_option('-s', '--use_ws_ssl', action = 'store_true',
-                          default = True, dest = 'use_ws_ssl',
-                          help = 'Enable SSL/TLS support over WebSockets')
-        parser.add_option('-k', '--ws_ssl_key', type = 'str', dest = 'ws_ssl_key',
-                          help = 'SSL Key for WebSockets' )
-        parser.add_option('-K', '--ws_ssl_cert', type = 'str', dest = 'ws_ssl_cert',
-                          help = 'SSL Cert for WebSockets' )
+                             'May be specified multiple times to listen on '
+                             'additional ports.', metavar = 'NUM')
+       # SSL options from master branch
+       parser.add_option('-s', '--use_ws_ssl', action = 'store_true',
+                         default = True, dest = 'use_ws_ssl',
+                         help = 'Enable SSL/TLS support over WebSockets')
+       parser.add_option('-k', '--ws_ssl_key', type = 'str', dest = 'ws_ssl_key',
+                         help = 'SSL Key for WebSockets' )
+       parser.add_option('-K', '--ws_ssl_cert', type = 'str', dest = 'ws_ssl_cert',
+                         help = 'SSL Cert for WebSockets' )
+       # Plugin options from puppet branch
+       parser.add_option('--puppet-master', help = 'Remote master server address for puppet plugin',
+                         metavar = 'ADDR')
+       parser.add_option('--puppet-port', type = 'int',
+                         help = 'Remote master server port for puppet plugin',
+                         metavar = 'PORT')
+       parser.add_option('--puppet-protocol', help = 'Protocol version for puppet plugin (default: 71)',
+                         metavar = 'PROTOCOL')
+       parser.add_option('--puppet-use-websocket', action = 'store_true',
+                         help = 'Use WebSocket instead of UDP for puppet plugin connections')
+       parser.add_option('--puppet-interval', type = 'int',
+                         help = 'Sync interval for puppet plugin (seconds)',
+                         metavar = 'SECONDS')
+       parser.add_option('--puppet-enable', action = 'store_true',
+                         help = 'Enable the puppet plugin')
+       parser.add_option('--puppet-run-once', action = 'store_true',
+                         help = 'Run puppet sync once and exit (do not start background thread)')
+       parser.add_option('--enable-sleepyteepee', action = 'store_true',
+                         help = 'Enable the Sleepyteepee REST API plugin')
+       # Also support environment variables for plugin enable flags
+       if getenv('PUPPET_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
+           self.puppet_enabled = True
+       if getenv('SLEEPYTEEPEE_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
+           self.sleepyteepee_enabled = True
+       if getenv('PUPPET_PORT'):
+           self.puppet_remote_port = int(getenv('PUPPET_PORT'))
+       if getenv('PUPPET_INTERVAL'):
+           self.puppet_interval = int(getenv('PUPPET_INTERVAL'))
+       parser.add_option('--api-host', help='Host to bind REST API server', metavar='ADDR',
+                          default = getenv('API_HOST'))
+       parser.add_option('--api-port', type='int', help='Port for REST API server', metavar='PORT',
+                          default = int(getenv('API_PORT')) if getenv('API_PORT') else None)
+       parser.add_option('--api-port-from-env', type='int', help='Port for REST API server from env var API_PORT', metavar='PORT')
+       parser.add_option('--api-keys', help='Comma-separated list of API keys', metavar='KEYS',
+                          default = getenv('API_KEYS'))
         self.options, args = parser.parse_args(argv[1:])
         if args:
             raise ConfigError('Unexpected command line arguments')
@@ -276,7 +325,12 @@ class MasterConfig(object):
         self.log(LOG_VERBOSE, 'Logging:', *loglevels[:self.verbose + 1])
 
         if not self.ipv4 and not self.ipv6:
-            raise ConfigError('Cannot specify both --ipv4 and --ipv6')
+            raise ConfigError('At least one of IPv4 or IPv6 must be enabled')
+
+        # Set default IPv6 listen address if IPv6 is enabled but no address is specified
+        if self.ipv6 and self.listen6_addr is None:
+            self.listen6_addr = '::'
+            self.log(LOG_VERBOSE, 'IPv6: No listen address specified, using default ::')
 
         if self.user is not None:
             try:
@@ -340,6 +394,34 @@ class MasterConfig(object):
         elif self.challengeport in self.ports:
             raise ConfigError('Challenge port cannot be the same as a request '
                               'port ({0})'.format(self.challengeport))
+
+        # Set plugin configuration
+        if self.puppet_master:
+            self.puppet_remote_master = self.puppet_master
+        if self.puppet_port:
+            self.puppet_remote_port = self.puppet_port
+        if self.options.puppet_protocol:
+            self.puppet_protocol = self.options.puppet_protocol
+        if self.options.puppet_use_websocket:
+            self.puppet_use_websocket = self.options.puppet_use_websocket
+        if self.puppet_interval:
+            self.puppet_interval = self.puppet_interval
+        if self.puppet_enable:
+            self.puppet_enabled = True
+        if self.options.puppet_run_once:
+            self.puppet_run_once = True
+        if self.options.enable_sleepyteepee:
+            self.sleepyteepee_enabled = True
+        if self.options.api_host is not None:
+            self.api_host = self.options.api_host
+        if self.options.api_port is not None:
+            self.api_port = self.options.api_port
+        if self.options.api_port_from_env is not None:
+            self.api_port_from_env = self.options.api_port_from_env
+        elif getenv('SLEEPYTEEPEE_PORT'):
+            self.api_port_from_env = int(getenv('SLEEPYTEEPEE_PORT'))
+        if self.options.api_keys is not None:
+            self.api_keys = self.options.api_keys
 
     def files(self):
         '''Read self.FEATURED_FILE, and for each label (starting at column 0)
@@ -500,6 +582,7 @@ class MasterConfig(object):
 
         try:
             stdout.write(self.logprefix(level) + argstr + '\n')
+            stdout.flush()
         except IOError as err:
             if err.errno == EIO:
                 pass

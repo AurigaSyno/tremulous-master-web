@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tremulous Master Server API Test</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 2rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #90a4ae;
+            margin-bottom: 30px;
+            font-size: 0.9rem;
+        }
+
+        .config-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .config-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .config-item {
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .config-item label {
+            display: block;
+            margin-bottom: 8px;
+            color: #b0bec5;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .config-item input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            color: #e0e0e0;
+            font-size: 0.95rem;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .config-item input:focus {
+            outline: none;
+            border-color: #4fc3f7;
+            box-shadow: 0 0 0 3px rgba(79, 195, 247, 0.2);
+        }
+
+        .endpoint-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .endpoint-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .endpoint-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .endpoint-card.public {
+            border-left: 3px solid #66bb6a;
+        }
+
+        .endpoint-card.admin {
+            border-left: 3px solid #ffa726;
+        }
+
+        .endpoint-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .method-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .method-badge.get { background: #4caf50; color: white; }
+        .method-badge.post { background: #2196f3; color: white; }
+        .method-badge.put { background: #ff9800; color: white; }
+        .method-badge.delete { background: #f44336; color: white; }
+
+        .endpoint-path {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            color: #90caf9;
+            word-break: break-all;
+        }
+
+        .endpoint-desc {
+            font-size: 0.8rem;
+            color: #b0bec5;
+            margin-bottom: 12px;
+        }
+
+        .endpoint-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            background: rgba(0,0,0,0.3);
+            color: #e0e0e0;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .endpoint-input:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+
+        .endpoint-input::placeholder {
+            color: rgba(255,255,255,0.3);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%);
+            color: #1a1a2e;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #81d4fa 0%, #4fc3f7 100%);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .response-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .response-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .response-title {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #e0e0e0;
+        }
+
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .status-badge.success { background: rgba(76, 175, 80, 0.2); color: #66bb6a; }
+        .status-badge.error { background: rgba(244, 67, 54, 0.2); color: #ef5350; }
+        .status-badge.pending { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
+
+        .response-meta {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .meta-item {
+            font-size: 0.85rem;
+            color: #b0bec5;
+        }
+
+        .meta-item span {
+            color: #90caf9;
+            font-family: 'Courier New', monospace;
+        }
+
+        .response-content {
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 500px;
+            overflow: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+
+        .response-content pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .response-content .empty {
+            color: rgba(255,255,255,0.3);
+            text-align: center;
+            padding: 30px;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #e0e0e0;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: #4fc3f7;
+            border-radius: 2px;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: #b0bec5;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.public { background: #66bb6a; }
+        .legend-dot.admin { background: #ffa726; }
+
+        @media (max-width: 768px) {
+            .endpoint-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .config-row {
+                flex-direction: column;
+            }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Tremulous Master Server API Test</h1>
+        <p class="subtitle">Interactive testing interface for the Sleepyteepee REST API</p>
+
+        <div class="config-section">
+            <div class="section-title">Configuration</div>
+            <div class="config-row">
+                <div class="config-item">
+                    <label for="baseUrl">API Base URL</label>
+                    <input type="text" id="baseUrl" value="http://localhost:8067" placeholder="http://localhost:8067">
+                </div>
+                <div class="config-item">
+                    <label for="apiKey">API Key (required for admin endpoints)</label>
+                    <input type="password" id="apiKey" placeholder="Enter your API key">
+                </div>
+            </div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-dot public"></div>
+                <span>Public (No Auth)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot admin"></div>
+                <span>Admin (Requires API Key)</span>
+            </div>
+        </div>
+
+
+        <div class="section-title">Public Endpoints</div>
+        <div class="endpoint-section" id="public-endpoints">
+            <!-- Public endpoints will be inserted here -->
+        </div>
+
+        <div class="section-title">Admin Endpoints</div>
+        <div class="endpoint-section" id="admin-endpoints">
+            <!-- Admin endpoints will be inserted here -->
+        </div>
+
+        <div class="response-section">
+            <div class="response-header">
+                <div class="response-title">Response</div>
+                <div class="status-badge" id="statusBadge">Ready</div>
+            </div>
+            <div class="response-meta" id="responseMeta" style="display: none;">
+                <div class="meta-item">Status: <span id="statusCode">-</span></div>
+                <div class="meta-item">Time: <span id="responseTime">-</span></div>
+                <div class="meta-item">Method: <span id="requestMethod">-</span></div>
+                <div class="meta-item">Endpoint: <span id="requestEndpoint">-</span></div>
+            </div>
+            <div class="response-content" id="responseContent">
+                <div class="empty">Click an endpoint button to test the API</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Endpoint definitions based on test_api_playwright.py
+        const endpoints = {
+            public: [
+                {
+                    method: 'GET',
+                    path: '/api/info',
+                    desc: 'Get server information',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'GET',
+                    path: '/api/servers',
+                    desc: 'Get all servers (alias for /)',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'GET',
+                    path: '/',
+                    desc: 'Get all servers (root endpoint)',
+                    inputPlaceholder: '',
+                    hasInput: false
+                }
+            ],
+            admin: [
+                {
+                    method: 'GET',
+                    path: '/api/stats',
+                    desc: 'Get server statistics',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'GET',
+                    path: '/api/motd',
+                    desc: 'Get current MOTD',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'PUT',
+                    path: '/api/motd',
+                    desc: 'Update MOTD',
+                    inputPlaceholder: '{"motd": "Welcome to the server!"}',
+                    hasInput: true
+                },
+                {
+                    method: 'GET',
+                    path: '/api/logs',
+                    desc: 'Get recent log entries',
+                    inputPlaceholder: '?level=error&limit=10',
+                    hasInput: true,
+                    isQueryParams: true
+                },
+                {
+                    method: 'GET',
+                    path: '/api/blacklist',
+                    desc: 'Get blacklist entries',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'POST',
+                    path: '/api/blacklist',
+                    desc: 'Add blacklist entry',
+                    inputPlaceholder: '{"ip": "192.168.1.100", "reason": "Test entry", "expires": "2025-12-31T23:59:59Z"}',
+                    hasInput: true
+                },
+                {
+                    method: 'GET',
+                    path: '/api/servers/rss',
+                    desc: 'Get RSS feed of servers',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'GET',
+                    path: '/api/featured',
+                    desc: 'Get featured server groups',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'PUT',
+                    path: '/api/featured',
+                    desc: 'Add/remove featured server',
+                    inputPlaceholder: '{"group": "official", "server": "127.0.0.1:30720"}',
+                    hasInput: true
+                },
+                {
+                    method: 'GET',
+                    path: '/api/plugins',
+                    desc: 'List all plugins',
+                    inputPlaceholder: '',
+                    hasInput: false
+                },
+                {
+                    method: 'POST',
+                    path: '/api/admin/reload-config',
+                    desc: 'Reload server configuration',
+                    inputPlaceholder: '',
+                    hasInput: false
+                }
+            ]
+        };
+
+        // Render endpoint cards
+        function renderEndpoints() {
+            const publicContainer = document.getElementById('public-endpoints');
+            const adminContainer = document.getElementById('admin-endpoints');
+
+            publicContainer.innerHTML = endpoints.public.map(ep => createEndpointCard(ep, 'public')).join('');
+            adminContainer.innerHTML = endpoints.admin.map(ep => createEndpointCard(ep, 'admin')).join('');
+        }
+
+        function createEndpointCard(endpoint, type) {
+            const inputHtml = endpoint.hasInput ? 
+                `<input type="text" class="endpoint-input" id="input-${endpoint.method}-${endpoint.path.replace(/[^a-zA-Z0-9]/g, '-')}" placeholder="${endpoint.inputPlaceholder}">` : '';
+            
+            const btnClass = endpoint.isDangerous ? 'background: linear-gradient(135deg, #f44336 0%, #e53935 100%); color: white;' : '';
+            const btnText = endpoint.isDangerous ? '⚠️ ' + endpoint.method : endpoint.method;
+
+            return `
+                <div class="endpoint-card ${type}">
+                    <div class="endpoint-header">
+                        <span class="method-badge ${endpoint.method.toLowerCase()}">${btnText}</span>
+                        <span class="endpoint-path">${endpoint.path}</span>
+                    </div>
+                    <div class="endpoint-desc">${endpoint.desc}</div>
+                    ${inputHtml}
+                    <button class="btn btn-primary" style="${btnClass}" onclick="testEndpoint('${endpoint.method}', '${endpoint.path}', ${endpoint.hasInput}, ${endpoint.isQueryParams || false}, ${endpoint.isPathId || false})">
+                        Test
+                    </button>
+                </div>
+            `;
+        }
+
+        // Test endpoint function
+        async function testEndpoint(method, path, hasInput, isQueryParams, isPathId) {
+            const baseUrl = document.getElementById('baseUrl').value.replace(/\/$/, '');
+            const apiKey = document.getElementById('apiKey').value;
+            const statusBadge = document.getElementById('statusBadge');
+            const responseMeta = document.getElementById('responseMeta');
+            const responseContent = document.getElementById('responseContent');
+            const inputId = `input-${method}-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+
+            let url = baseUrl + path;
+            let body = null;
+            let headers = {
+                'Content-Type': 'application/json'
+            };
+
+            // Add API key for admin endpoints
+            if (apiKey) {
+                headers['X-API-Key'] = apiKey;
+            }
+
+            // Handle input
+            if (hasInput) {
+                const inputEl = document.getElementById(inputId);
+                const inputValue = inputEl ? inputEl.value : '';
+
+                if (isPathId) {
+                    // Replace {id} in path with input value
+                    url = baseUrl + path.replace('{id}', inputValue);
+                } else if (isQueryParams) {
+                    // Append query parameters
+                    url = baseUrl + path + inputValue;
+                } else if (method !== 'GET' && method !== 'DELETE') {
+                    // Parse as JSON for POST/PUT
+                    try {
+                        body = JSON.parse(inputValue);
+                    } catch (e) {
+                        showError('Invalid JSON in input field');
+                        return;
+                    }
+                }
+            }
+
+            // Update UI to show loading
+            statusBadge.className = 'status-badge pending';
+            statusBadge.innerHTML = '<span class="spinner"></span> Loading...';
+            responseMeta.style.display = 'none';
+
+            const startTime = performance.now();
+
+            try {
+                const options = {
+                    method: method,
+                    headers: headers
+                };
+
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(url, options);
+                const endTime = performance.now();
+                const responseTime = Math.round(endTime - startTime);
+
+                // Get response text
+                const responseText = await response.text();
+
+                // Update response meta
+                document.getElementById('statusCode').textContent = response.status;
+                document.getElementById('responseTime').textContent = responseTime + 'ms';
+                document.getElementById('requestMethod').textContent = method;
+                document.getElementById('requestEndpoint').textContent = path;
+                responseMeta.style.display = 'flex';
+
+                // Update status badge
+                if (response.ok) {
+                    statusBadge.className = 'status-badge success';
+                    statusBadge.textContent = 'Success';
+                } else {
+                    statusBadge.className = 'status-badge error';
+                    statusBadge.textContent = 'Error';
+                }
+
+                // Display response
+                try {
+                    const jsonResponse = JSON.parse(responseText);
+                    responseContent.innerHTML = `<pre>${JSON.stringify(jsonResponse, null, 2)}</pre>`;
+                } catch (e) {
+                    responseContent.innerHTML = `<pre>${escapeHtml(responseText)}</pre>`;
+                }
+
+            } catch (error) {
+                const endTime = performance.now();
+                const responseTime = Math.round(endTime - startTime);
+
+                statusBadge.className = 'status-badge error';
+                statusBadge.textContent = 'Failed';
+
+                document.getElementById('statusCode').textContent = 'N/A';
+                document.getElementById('responseTime').textContent = responseTime + 'ms';
+                document.getElementById('requestMethod').textContent = method;
+                document.getElementById('requestEndpoint').textContent = path;
+                responseMeta.style.display = 'flex';
+
+                responseContent.innerHTML = `<pre style="color: #ef5350;">Error: ${escapeHtml(error.message)}</pre>`;
+            }
+        }
+
+        function showError(message) {
+            const statusBadge = document.getElementById('statusBadge');
+            const responseContent = document.getElementById('responseContent');
+
+            statusBadge.className = 'status-badge error';
+            statusBadge.textContent = 'Error';
+            responseContent.innerHTML = `<pre style="color: #ef5350;">${escapeHtml(message)}</pre>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', renderEndpoints);
+    </script>
+</body>
+</html>
