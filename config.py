@@ -257,49 +257,49 @@ class MasterConfig(object):
                            dest='ws_ports', help = 'Websocket ports for incoming requests. '
                              'May be specified multiple times to listen on '
                              'additional ports.', metavar = 'NUM')
-       # SSL options from master branch
-       parser.add_option('-s', '--use_ws_ssl', action = 'store_true',
+        # SSL options from master branch
+        parser.add_option('-s', '--use_ws_ssl', action = 'store_true',
                          default = True, dest = 'use_ws_ssl',
                          help = 'Enable SSL/TLS support over WebSockets')
-       parser.add_option('-k', '--ws_ssl_key', type = 'str', dest = 'ws_ssl_key',
-                         help = 'SSL Key for WebSockets' )
-       parser.add_option('-K', '--ws_ssl_cert', type = 'str', dest = 'ws_ssl_cert',
-                         help = 'SSL Cert for WebSockets' )
-       # Plugin options from puppet branch
-       parser.add_option('--puppet-master', help = 'Remote master server address for puppet plugin',
-                         metavar = 'ADDR')
-       parser.add_option('--puppet-port', type = 'int',
-                         help = 'Remote master server port for puppet plugin',
-                         metavar = 'PORT')
-       parser.add_option('--puppet-protocol', help = 'Protocol version for puppet plugin (default: 71)',
-                         metavar = 'PROTOCOL')
-       parser.add_option('--puppet-use-websocket', action = 'store_true',
-                         help = 'Use WebSocket instead of UDP for puppet plugin connections')
-       parser.add_option('--puppet-interval', type = 'int',
-                         help = 'Sync interval for puppet plugin (seconds)',
-                         metavar = 'SECONDS')
-       parser.add_option('--puppet-enable', action = 'store_true',
-                         help = 'Enable the puppet plugin')
-       parser.add_option('--puppet-run-once', action = 'store_true',
-                         help = 'Run puppet sync once and exit (do not start background thread)')
-       parser.add_option('--enable-sleepyteepee', action = 'store_true',
-                         help = 'Enable the Sleepyteepee REST API plugin')
-       # Also support environment variables for plugin enable flags
-       if getenv('PUPPET_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
-           self.puppet_enabled = True
-       if getenv('SLEEPYTEEPEE_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
-           self.sleepyteepee_enabled = True
-       if getenv('PUPPET_PORT'):
-           self.puppet_remote_port = int(getenv('PUPPET_PORT'))
-       if getenv('PUPPET_INTERVAL'):
-           self.puppet_interval = int(getenv('PUPPET_INTERVAL'))
-       parser.add_option('--api-host', help='Host to bind REST API server', metavar='ADDR',
-                          default = getenv('API_HOST'))
-       parser.add_option('--api-port', type='int', help='Port for REST API server', metavar='PORT',
-                          default = int(getenv('API_PORT')) if getenv('API_PORT') else None)
-       parser.add_option('--api-port-from-env', type='int', help='Port for REST API server from env var API_PORT', metavar='PORT')
-       parser.add_option('--api-keys', help='Comma-separated list of API keys', metavar='KEYS',
-                          default = getenv('API_KEYS'))
+        parser.add_option('-k', '--ws_ssl_key', type = 'str', dest = 'ws_ssl_key',
+                            help = 'SSL Key for WebSockets')
+        parser.add_option('-K', '--ws_ssl_cert', type = 'str', dest = 'ws_ssl_cert',
+                            help = 'SSL Cert for WebSockets')
+        # Plugin options from puppet branch
+        parser.add_option('--puppet-master', help = 'Remote master server address for puppet plugin',
+                            metavar = 'ADDR')
+        parser.add_option('--puppet-port', type = 'int',
+                            help = 'Remote master server port for puppet plugin',
+                            metavar = 'PORT')
+        parser.add_option('--puppet-protocol', help = 'Protocol version for puppet plugin (default: 71)',
+                            metavar = 'PROTOCOL')
+        parser.add_option('--puppet-use-websocket', action = 'store_true',
+                            help = 'Use WebSocket instead of UDP for puppet plugin connections')
+        parser.add_option('--puppet-interval', type = 'int',
+                            help = 'Sync interval for puppet plugin (seconds)',
+                            metavar = 'SECONDS')
+        parser.add_option('--puppet-enable', action = 'store_true',
+                            help = 'Enable the puppet plugin')
+        parser.add_option('--puppet-run-once', action = 'store_true',
+                            help = 'Run puppet sync once and exit (do not start background thread)')
+        parser.add_option('--enable-sleepyteepee', action = 'store_true',
+                            help = 'Enable the Sleepyteepee REST API plugin')
+        # Also support environment variables for plugin enable flags
+        if getenv('PUPPET_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
+            self.puppet_enabled = True
+        if getenv('SLEEPYTEEPEE_ENABLE', '').lower() in ('1', 'true', 'yes', 'on'):
+            self.sleepyteepee_enabled = True
+        if getenv('PUPPET_PORT'):
+            self.puppet_remote_port = int(getenv('PUPPET_PORT'))
+        if getenv('PUPPET_INTERVAL'):
+            self.puppet_interval = int(getenv('PUPPET_INTERVAL'))
+        parser.add_option('--api-host', help='Host to bind REST API server', metavar='ADDR',
+                            default = getenv('API_HOST'))
+        parser.add_option('--api-port', type='int', help='Port for REST API server', metavar='PORT',
+                            default = int(getenv('API_PORT')) if getenv('API_PORT') else None)
+        parser.add_option('--api-port-from-env', type='int', help='Port for REST API server from env var API_PORT', metavar='PORT')
+        parser.add_option('--api-keys', help='Comma-separated list of API keys', metavar='KEYS',
+                            default = getenv('API_KEYS'))
         self.options, args = parser.parse_args(argv[1:])
         if args:
             raise ConfigError('Unexpected command line arguments')
