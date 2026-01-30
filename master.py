@@ -320,11 +320,14 @@ def gamestat(addr, data):
 def getmotd(sock, addr, data):
     '''A client getmotd request: log the client information and then send the
     response'''
+    #convert data to string
+    if isinstance(data, bytes):
+        data = data.decode('ascii')
     addrstr = '<< {0}'.format(addr)
     try:
-        _, infostr = data.split(b'\\', 1)
+        _, infostr = data.split('\\', 1)
     except ValueError:
-        infostr = b''
+        infostr = ''
     info = Info(infostr)
     rinfo = Info()
     try:
