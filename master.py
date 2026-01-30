@@ -450,7 +450,7 @@ def getservers(sock, addr, data):
             message = start
             if ext:
                 message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
-            if sock.type == SOCK_STREAM and s.hostname: #websocket connections require a hostname instead of an IP
+            if sock.type == SOCK_STREAM: #websocket connections require a hostname instead of an IP
                 message += b''.join(gsr_formatname(s) for s in packet)
             else:
                 message += b''.join(gsr_formataddr(s.addr) for s in packet)
