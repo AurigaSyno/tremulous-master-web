@@ -171,6 +171,7 @@ class Server(object):
         self.sock = outSocks[addr.family]
         self.lastactive = 0
         self.timeout = 0
+        self.hostname = ''
 
     def __bool__(self):
         '''Server has replied to a challenge'''
@@ -218,6 +219,7 @@ class Server(object):
         info = Info(infostring)
         try:
             name = info['hostname']
+            self.hostname = name
             if info['challenge'] != self.challenge:
                 log(LOG_VERBOSE, addrstr, 'mismatched challenge: '
                     '{0!r} != {1!r}'.format(info['challenge'], self.challenge))
@@ -365,7 +367,13 @@ def filterservers(slist, af, protocol, empty, full):
             and (empty or not s.empty)
             and (full  or not s.full)]
 
-def gsr_formataddr(addr):
+def gsr_formatname(server): #for websocket connections
+    sep  = b'\\'
+    hostname = server.hostname.encode('ascii')
+    port = bytes([server.addr.port >> 8, server.addr.port & 0xff])
+    return sep + hostname + port
+
+def gsr_formataddr(addr): #for udp connections
     sep  = b'\\' if addr.family == AF_INET else b'/'
     host = inet_pton(addr.family, addr.host)
     port = bytes([addr.port >> 8, addr.port & 0xff])
@@ -442,7 +450,10 @@ def getservers(sock, addr, data):
             message = start
             if ext:
                 message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
-            message += b''.join(gsr_formataddr(s.addr) for s in packet)
+            if sock.type == SOCK_STREAM and s.hostname: #websocket connections require a hostname instead of an IP
+                message += b''.join(gsr_formatname(s) for s in packet)
+            else:
+                message += b''.join(gsr_formataddr(s.addr) for s in packet)
             message += b'\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
