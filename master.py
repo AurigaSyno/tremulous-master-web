@@ -322,9 +322,9 @@ def getmotd(sock, addr, data):
     response'''
     addrstr = '<< {0}'.format(addr)
     try:
-        _, infostr = data.split('\\', 1)
+        _, infostr = data.split(b'\\', 1)
     except ValueError:
-        infostr = ''
+        infostr = b''
     info = Info(infostr)
     rinfo = Info()
     try:
