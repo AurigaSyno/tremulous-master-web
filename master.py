@@ -172,9 +172,9 @@ class Server(object):
         self.lastactive = 0
         self.timeout = 0
         try:
-            self.hostname = gethostbyaddr(addr)
+            self.hostname = gethostbyaddr(addr.host)
         except sockerr as e:
-            log(LOG_ERROR, 'Unable to get hostname for ', self.addr)
+            log(LOG_ERROR, 'Unable to get hostname for ', addr.host)
 
     def __bool__(self):
         '''Server has replied to a challenge'''
