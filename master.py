@@ -172,7 +172,8 @@ class Server(object):
         self.lastactive = 0
         self.timeout = 0
         try:
-            self.hostname = gethostbyaddr(addr.host)
+            hostname_info = gethostbyaddr(addr.host)
+            self.hostname = hostname_info[0]
         except sockerr as e:
             log(LOG_ERROR, 'Unable to get hostname for ', addr.host)
 
