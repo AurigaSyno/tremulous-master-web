@@ -385,7 +385,9 @@ def getservers(sock, addr, data):
     tokens = data.split()
     ext = (tokens.pop(0) == b'getserversExt')
     web = (sock.type == SOCK_STREAM)
-    if ext and not web: #FIXME: does this drop IPv6 support?
+    if web: ext = True
+
+    if ext: #FIXME: does this drop IPv6 support?
         try:
             game = tokens.pop(0).decode('ascii')
         except IndexError:
@@ -400,7 +402,7 @@ def getservers(sock, addr, data):
         log(LOG_VERBOSE, '<< {0}: no protocol specified'.format(addr))
         return
     empty, full = b'empty' in tokens, b'full' in tokens
-    if ext and not web:
+    if ext:
         family = (AF_INET  if b'ipv4' in tokens
              else AF_INET6 if b'ipv6' in tokens
              else AF_UNSPEC)
@@ -411,7 +413,7 @@ def getservers(sock, addr, data):
     packets = {None: list()}
     for label in list(servers.keys()):
         # dict of lists of lists
-        if ext and not web:
+        if ext:
             packets[label] = list()
             filtered = filterservers(list(servers[label].values()),
                                      family, protocol, empty, full)
@@ -450,10 +452,11 @@ def getservers(sock, addr, data):
             label = ''
         for packet in packs:
             message = start
+            if ext:
+                message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
+
             if web: #websocket connections require a hostname instead of an IP
                 message += b''.join(gsr_formatname(s) for s in packet)
-            elif ext:
-                message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
             else:
                 message += b''.join(gsr_formataddr(s.addr) for s in packet)
             message += b'\\'
