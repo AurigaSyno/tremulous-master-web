@@ -459,7 +459,11 @@ def getservers(sock, addr, data):
                 message += b''.join(gsr_formatname(s) for s in packet)
             else:
                 message += b''.join(gsr_formataddr(s.addr) for s in packet)
-            message += b'\\'
+
+            if web:
+                message += b'\\EOT' #web client parser expects this
+            else:
+                message += b'\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
             print(message)
