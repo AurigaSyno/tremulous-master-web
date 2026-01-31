@@ -171,11 +171,7 @@ class Server(object):
         self.sock = outSocks[addr.family]
         self.lastactive = 0
         self.timeout = 0
-        try:
-            hostname_info = gethostbyaddr(addr.host)
-            self.hostname = hostname_info[0]
-        except sockerr as e:
-            log(LOG_ERROR, 'Unable to get hostname for ', addr.host)
+        self.servername = '' #the domain websockets will connect it to
 
     def __bool__(self):
         '''Server has replied to a challenge'''
@@ -230,6 +226,7 @@ class Server(object):
             self.protocols = info['protocol'].split(',')
             self.empty = (info['clients'] == '0')
             self.full = (info['clients'] == info['sv_maxclients'])
+            self.servername = info['servername']
         except KeyError as ex:
             log(LOG_VERBOSE, addrstr, 'info key missing:', ex)
             return False
@@ -372,9 +369,9 @@ def filterservers(slist, af, protocol, empty, full):
 
 def gsr_formatname(server): #for websocket connections
     sep  = b'\\'
-    hostname = server.hostname.encode('ascii')
+    servername = server.servername.encode('ascii')
     port = bytes([server.addr.port >> 8, server.addr.port & 0xff])
-    return sep + hostname + port
+    return sep + servername + port
 
 def gsr_formataddr(addr): #for udp connections
     sep  = b'\\' if addr.family == AF_INET else b'/'
@@ -387,7 +384,8 @@ def getservers(sock, addr, data):
 
     tokens = data.split()
     ext = (tokens.pop(0) == b'getserversExt')
-    if ext:
+    web = (sock.type == SOCK_STREAM)
+    if ext and not web: #FIXME: does this drop IPv6 support?
         try:
             game = tokens.pop(0).decode('ascii')
         except IndexError:
@@ -402,7 +400,7 @@ def getservers(sock, addr, data):
         log(LOG_VERBOSE, '<< {0}: no protocol specified'.format(addr))
         return
     empty, full = b'empty' in tokens, b'full' in tokens
-    if ext:
+    if ext and not web:
         family = (AF_INET  if b'ipv4' in tokens
              else AF_INET6 if b'ipv6' in tokens
              else AF_UNSPEC)
@@ -413,7 +411,7 @@ def getservers(sock, addr, data):
     packets = {None: list()}
     for label in list(servers.keys()):
         # dict of lists of lists
-        if ext:
+        if ext and not web:
             packets[label] = list()
             filtered = filterservers(list(servers[label].values()),
                                      family, protocol, empty, full)
@@ -434,8 +432,9 @@ def getservers(sock, addr, data):
                 else:
                     packets[None].append(filtered[:config.GSR_MAXSERVERS])
                     filtered = filtered[config.GSR_MAXSERVERS:]
-
-    if ext:
+    if web:
+        start = b'\xff\xff\xff\xffgetserverswebResponse'
+    elif ext:
         start = b'\xff\xff\xff\xffgetserversExtResponse'
     else:
         start = b'\xff\xff\xff\xffgetserversResponse'
@@ -451,10 +450,10 @@ def getservers(sock, addr, data):
             label = ''
         for packet in packs:
             message = start
-            if ext:
-                message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
-            if sock.type == SOCK_STREAM: #websocket connections require a hostname instead of an IP
+            if web: #websocket connections require a hostname instead of an IP
                 message += b''.join(gsr_formatname(s) for s in packet)
+            elif ext:
+                message += b'\0' + str(index).encode('ascii') + b'\0' + str(numpackets).encode('ascii') + b'\0' + label.encode('ascii')
             else:
                 message += b''.join(gsr_formataddr(s.addr) for s in packet)
             message += b'\\'
