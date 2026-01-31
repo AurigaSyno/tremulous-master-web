@@ -371,7 +371,7 @@ def gsr_formatname(server): #for websocket connections
     sep  = b'\\'
     servername = server.servername.encode('ascii')
     port = bytes([server.addr.port >> 8, server.addr.port & 0xff])
-    return sep + servername + port
+    return sep + servername + sep + port
 
 def gsr_formataddr(addr): #for udp connections
     sep  = b'\\' if addr.family == AF_INET else b'/'
@@ -460,10 +460,7 @@ def getservers(sock, addr, data):
             else:
                 message += b''.join(gsr_formataddr(s.addr) for s in packet)
 
-            if web:
-                message += b'\\EOT' #web client parser expects this
-            else:
-                message += b'\\'
+            message += b'\\'
             log(LOG_DEBUG, '>> {0}: {1} servers'.format(addr, len(packet)))
             log(LOG_DEBUG, '>> {0}: {1!r}'.format(addr, message))
             print(message)
