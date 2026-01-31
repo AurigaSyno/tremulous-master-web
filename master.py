@@ -369,9 +369,10 @@ def filterservers(slist, af, protocol, empty, full):
 
 def gsr_formatname(server): #for websocket connections
     sep  = b'\\'
+    colon = b':'
     servername = server.servername.encode('ascii')
     port = bytes([server.addr.port >> 8, server.addr.port & 0xff])
-    return sep + servername + sep + port
+    return sep + servername + colon + port
 
 def gsr_formataddr(addr): #for udp connections
     sep  = b'\\' if addr.family == AF_INET else b'/'
