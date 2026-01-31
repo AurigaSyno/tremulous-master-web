@@ -42,7 +42,7 @@ from os import kill, getpid
 from random import choice
 from select import select, error as selecterror
 from signal import signal, SIGINT, SIG_DFL
-from socket import (socket, error as sockerr, has_ipv6,
+from socket import (socket, error as sockerr, has_ipv6, gethostbyaddr,
                    AF_UNSPEC, AF_INET, AF_INET6, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, IPPROTO_UDP, IPPROTO_TCP)
 from sys import exit, stderr
 from time import time
@@ -171,7 +171,10 @@ class Server(object):
         self.sock = outSocks[addr.family]
         self.lastactive = 0
         self.timeout = 0
-        self.hostname = ''
+        try:
+            self.hostname = gethostbyaddr(addr)
+        except socket.error as e:
+            log(LOG_ERROR, 'Unable to get hostname for ', self.addr)
 
     def __bool__(self):
         '''Server has replied to a challenge'''
@@ -219,7 +222,6 @@ class Server(object):
         info = Info(infostring)
         try:
             name = info['hostname']
-            self.hostname = name
             if info['challenge'] != self.challenge:
                 log(LOG_VERBOSE, addrstr, 'mismatched challenge: '
                     '{0!r} != {1!r}'.format(info['challenge'], self.challenge))
