@@ -173,7 +173,7 @@ class Server(object):
         self.timeout = 0
         try:
             self.hostname = gethostbyaddr(addr)
-        except socket.error as e:
+        except sockerr as e:
             log(LOG_ERROR, 'Unable to get hostname for ', self.addr)
 
     def __bool__(self):
